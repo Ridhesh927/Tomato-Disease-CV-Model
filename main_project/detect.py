@@ -3,7 +3,10 @@ import cv2
 import numpy as np
 import tensorflow as tf
 
-MODEL_PATH = r"d:\dataset cv\model_and_data\tomato_disease_model_efficientnetb3.h5"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+MODEL_DIR = os.path.join(PROJECT_ROOT, "model_and_data")
+MODEL_PATH = os.path.join(MODEL_DIR, "tomato_disease_model_efficientnetb3.h5")
 IMG_SIZE = (224, 224)
 
 TOMATO_CLASSES = [
@@ -25,7 +28,7 @@ def load_prediction_model():
         print("Model file not found. Please check the path.")
         
         # Check if the other model exists (fallback)
-        fallback = r"d:\dataset cv\model_and_data\tomato_disease_model.h5"
+        fallback = os.path.join(MODEL_DIR, "tomato_disease_model.h5")
         if os.path.exists(fallback):
             print(f"Fallback model found at {fallback}. Loading it instead.")
             return tf.keras.models.load_model(fallback)
@@ -35,9 +38,50 @@ def load_prediction_model():
     print("Model loaded successfully!")
     return model
 
+
+def model_has_rescaling_layer(model):
+    return any(layer.__class__.__name__ == "Rescaling" for layer in model.layers)
+
+
+def prepare_batch_for_model(model, batch_rgb):
+    if model_has_rescaling_layer(model):
+        # Model expects 0-255 inputs and handles normalization internally.
+        return batch_rgb.astype(np.float32)
+    # Fallback for older MobileNet-style models without embedded rescaling.
+    return tf.keras.applications.mobilenet_v2.preprocess_input(batch_rgb.astype(np.float32))
+
+
+def extract_leaf_roi(frame):
+    """Crop to dominant leaf-like region to reduce background bias."""
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    lower_green = np.array([25, 40, 40])
+    upper_green = np.array([85, 255, 255])
+    mask = cv2.inRange(hsv, lower_green, upper_green)
+
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return frame
+
+    largest = max(contours, key=cv2.contourArea)
+    x, y, w, h = cv2.boundingRect(largest)
+    if w * h < 0.05 * frame.shape[0] * frame.shape[1]:
+        return frame
+
+    pad = int(0.08 * max(w, h))
+    x1 = max(0, x - pad)
+    y1 = max(0, y - pad)
+    x2 = min(frame.shape[1], x + w + pad)
+    y2 = min(frame.shape[0], y + h + pad)
+    return frame[y1:y2, x1:x2]
+
 def predict_frame(model, frame):
+    leaf_frame = extract_leaf_roi(frame)
     # Resize to the input shape that the model expects
-    img = cv2.resize(frame, IMG_SIZE)
+    img = cv2.resize(leaf_frame, IMG_SIZE)
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     
     # 1. Base image
@@ -53,6 +97,7 @@ def predict_frame(model, frame):
     
     # Stack into a batch of 3
     batch = np.stack([img_array1, img_array2, img_array3])
+    batch = prepare_batch_for_model(model, batch)
     
     # Predict all at once natively (faster)
     predictions = model.predict(batch, verbose=0)
@@ -64,8 +109,10 @@ def predict_frame(model, frame):
     class_idx = np.argmax(avg_pred)
     confidence = np.max(avg_pred) * 100
     class_name = TOMATO_CLASSES[class_idx]
-    
-    return class_name, confidence
+
+    top3_idx = np.argsort(avg_pred)[-3:][::-1]
+    top3 = [(TOMATO_CLASSES[i], float(avg_pred[i] * 100)) for i in top3_idx]
+    return class_name, confidence, top3
 
 def is_leaf_present(frame):
     """
@@ -127,13 +174,18 @@ def detect_from_image(model):
         print("------------------------\n")
     else:
         # Only run the heavy AI model if a leaf is present
-        class_name, confidence = predict_frame(model, frame)
+        class_name, confidence, top3 = predict_frame(model, frame)
         label_text, color = get_disease_info(class_name)
         
         print(f"\n--- Detection Result ---")
         print(f"Status: {label_text}")
         print(f"Confidence: {confidence:.2f}%")
         print(f"Raw Class: {class_name}")
+        print("Top-3 Predictions:")
+        for rank, (cname, prob) in enumerate(top3, start=1):
+            print(f"  {rank}. {cname} - {prob:.2f}%")
+        preprocess_mode = "Internal Rescaling" if model_has_rescaling_layer(model) else "MobileNetV2 preprocess_input"
+        print(f"Preprocessing Mode: {preprocess_mode}")
         print("------------------------\n")
     
     # Display the image with the prediction
@@ -168,7 +220,7 @@ def detect_live(model):
             color = (0, 165, 255) # Orange
             confidence_text = ""
         else:
-            class_name, confidence = predict_frame(model, frame)
+            class_name, confidence, _ = predict_frame(model, frame)
             label_text, color = get_disease_info(class_name)
             confidence_text = f" ({confidence:.1f}%)"
         
@@ -220,11 +272,14 @@ def detect_from_directory(model):
             class_name = "N/A"
             print("Status: No Plant/Leaf found in image.")
         else:
-            class_name, confidence = predict_frame(model, frame)
+            class_name, confidence, top3 = predict_frame(model, frame)
             label_text, color = get_disease_info(class_name)
             
             print(f"Status: {label_text}")
             print(f"Confidence: {confidence:.2f}%")
+            print("Top-3 Predictions:")
+            for rank, (cname, prob) in enumerate(top3, start=1):
+                print(f"  {rank}. {cname} - {prob:.2f}%")
             
         cv2.putText(frame, f"{label_text} ({confidence:.1f}%)", (10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv2.LINE_AA)

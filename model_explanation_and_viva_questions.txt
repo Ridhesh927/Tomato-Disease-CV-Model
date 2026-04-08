@@ -10,7 +10,7 @@ Core Approach: The system uses a Convolutional Neural Network (CNN) based on Tra
 
 2. ARCHITECTURE & TRANSFER LEARNING
 -----------------------------------
-Base Model (MobileNetV2): The model specifically relies on the MobileNetV2 architecture, pre-trained on a massive dataset (ImageNet). 
+Base Model (MobileNetV2): The model specifically relies on the MobileNetV2 architecture, pre-trained on a massive dataset (ImageNet).
 [IMPORTANT NOTE ON FILENAME]: The final exported model file is named `tomato_disease_model_efficientnetb3.h5`, however, the code inside your training pipeline (`train_pipeline.py`) explicitly builds and trains a `tf.keras.applications.MobileNetV2`. If asked during a presentation or viva, clarify that the architecture is indeed MobileNetV2 (chosen for its incredibly fast real-time live camera processing speed, which heavy models like EfficientNet struggle with), and the filename is just a holdover from an earlier experiment.
 Classification Head: On top of the base model, custom layers are added:
 - Global Average Pooling: Flattens the 2D feature maps from the base into a 1D vector.
@@ -106,3 +106,15 @@ Why so high?: Transfer learning combined with a robust two-phase fine-tuning set
 2. Two-Phase Fine-Tuning: Instead of randomly training the entire heavy network (which causes 'catastrophic forgetting' of ImageNet weights) or just training the top layer (which misses out on tomato-specific textures), our model explicitly freezes the base, trains the custom head, and then unfreezes the top layers with a micro learning rate (1e-5). This perfectly balances preserved knowledge with specialized task learning.
 3. Test-Time Augmentation (TTA) in Inference: Our `detect.py` script doesn't just pass a single image to the model. It passes the original, a flipped version, and a brightened version simultaneously, then averages their confidence scores. Almost no basic projects do this. This practically eliminates 'flickering' in live video where one bad frame ruins the prediction.
 4. Intelligent Pre-Processing Hook: The `is_leaf_present` HSV color-filter acts as a gatekeeper. It stops the model from running expensive mathematical computations on blank walls or empty hands, saving CPU cycles and preventing bizarre false-positive predictions.
+
+HOw to run :
+
+# Navigate to the directory
+cd "e:\Project\CV Project\DataModel_CV"
+
+# Activate the virtual environment
+.\venv\Scripts\activate
+
+# Now you can run your scripts or install other packages
+python main_project\detect.py
+
