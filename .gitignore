@@ -9,3 +9,7 @@ venv/
 env/
 .idea/
 .vscode/
+
+# Models
+*.h5
+model_and_data/*.h5

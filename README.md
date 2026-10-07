@@ -1,4 +1,4 @@
-# Tomato Leaf Disease Detector 🍅
+# Tomato-Disease-CV-Model 🍅
 
 A deep learning-based system designed to detect and classify 10 different tomato leaf conditions (9 diseases and 1 healthy state) using Computer Vision.
 
